@@ -62,11 +62,11 @@ def main():
     # 4. Visualization
     print("\nVisualizing Surface & Uncertainty...")
     
-    # Create grid that extends beyond training data [-1.5, 1.5]
+    # Create grid that extends beyond training data [-1.2, 1.2]
     # This allows us to see "Extrapolation Uncertainty"
     res = 50
-    x1_grid = np.linspace(-1.5, 1.5, res)
-    x2_grid = np.linspace(-1.5, 1.5, res)
+    x1_grid = np.linspace(-1.2, 1.2, res)
+    x2_grid = np.linspace(-1.2, 1.2, res)
     X1_mesh, X2_mesh = np.meshgrid(x1_grid, x2_grid)
     X_test_grid = np.column_stack([X1_mesh.ravel(), X2_mesh.ravel()])
 
@@ -83,8 +83,8 @@ def main():
     # Only plot data within the valid [-1, 1] box
     sc = axes[0].scatter(X_train[:,0], X_train[:,1], c=y_train.ravel(), cmap='viridis', s=20, edgecolors='k', linewidth=0.5)
     axes[0].set_title("1. Noisy Training Data")
-    axes[0].set_xlim(-1.5, 1.5)
-    axes[0].set_ylim(-1.5, 1.5)
+    axes[0].set_xlim(-1.2, 1.2)
+    axes[0].set_ylim(-1.2, 1.2)
     # Draw box to show training boundary
     rect = plt.Rectangle((-1, -1), 2, 2, fill=False, color='red', linestyle='--', linewidth=2)
     axes[0].add_patch(rect)
