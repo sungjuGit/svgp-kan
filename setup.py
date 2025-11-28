@@ -12,6 +12,9 @@ setup(
         "matplotlib",
         "scikit-learn"
     ],
+
+    python_requires='>=3.8',
+    
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
