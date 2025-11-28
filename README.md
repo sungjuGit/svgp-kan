@@ -20,7 +20,7 @@ If you use this code, please cite our arXiv manuscript: Y. S. Ju (2025). Scalabl
 
 ```python
 import numpy as np
-from svgp_kan.regressor import GPKANRegressor
+from svgp_kan import GPKANRegressor
 
 # 1. Generate Data (Sine + Linear + Noise)
 X = np.random.rand(1000, 3)
