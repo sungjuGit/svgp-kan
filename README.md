@@ -14,7 +14,7 @@ Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementatio
 * **Universal:** The RBF kernel can adapt to learn periodic, linear, or complex non-linear functions.
 
 ## Citation
-If you use this code, please cite our arXiv manuscript: Y. S. Ju (2025). Scalable and Interpretable Scientific Discovery via Sparse Variational Gaussian Process Kolmogorov-Arnold Networks.
+If you use this code or any modified versions (or perhas even get some inspirations), please cite our arXiv manuscript: Y. S. Ju (2025). Scalable and Interpretable Scientific Discovery via Sparse Variational Gaussian Process Kolmogorov-Arnold Networks.
 
 ## Quick Start
 
