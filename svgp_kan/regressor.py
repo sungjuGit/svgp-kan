@@ -16,26 +16,48 @@ class GPKANRegressor:
         self.num_inducing = num_inducing
         self.device = device
         
-        # Initialize the model
         self.model = GPKAN(
             layers_hidden=hidden_layers, 
             num_inducing=num_inducing, 
             kernel_type=kernel
         ).to(device)
         
+        # Initialize noise slightly lower (-2.0) to encourage kernel fitting
+        self.likelihood_log_var = torch.nn.Parameter(
+            torch.tensor(-2.0, device=device) 
+        )
+        
         self.history = {'loss': [], 'sparsity': []}
         self.trained = False
+        self.noise_lower_bound = 1e-4 
 
-    def fit(self, X, y, epochs=1000, lr=0.02, sparsity_weight=0.05, verbose=True):
+    def fit(self, X, y, epochs=1000, lr=0.02, sparsity_weight=0.05, noise_lower_bound=None, verbose=True):
         """
         Trains the model.
-        Args:
-            sparsity_weight: Strength of ARD (L1 penalty) to prune irrelevant features.
         """
         X_ten = self._to_tensor(X)
         y_ten = self._to_tensor(y)
         
-        optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        # --- Logic Check: Auto-adjust Noise Bound ---
+        data_var = y_ten.var().item()
+        
+        if noise_lower_bound is None:
+            self.noise_lower_bound = 1e-4
+        else:
+            if noise_lower_bound > 0.5 * data_var:
+                safe_bound = 0.5 * data_var
+                if verbose:
+                    print(f"WARNING: noise_lower_bound ({noise_lower_bound:.4f}) is too high for data variance ({data_var:.4f}).")
+                    print(f"Auto-adjusting bound to {safe_bound:.4f}.")
+                self.noise_lower_bound = safe_bound
+            else:
+                self.noise_lower_bound = noise_lower_bound
+
+        optimizer = optim.Adam([
+            {'params': self.model.parameters()},
+            {'params': [self.likelihood_log_var], 'lr': 0.05} 
+        ], lr=lr)
+        
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=epochs//4, gamma=0.8)
         
         self.model.train()
@@ -43,22 +65,20 @@ class GPKANRegressor:
         for epoch in range(epochs):
             optimizer.zero_grad()
             
-            # Forward pass
-            mu, var = self.model(X_ten)
+            f_mu, f_var = self.model(X_ten)
             
-            # 1. Accuracy Loss (NLL)
-            nll = gaussian_nll_loss(mu, var, y_ten)
+            obs_noise = torch.exp(self.likelihood_log_var).clamp(min=self.noise_lower_bound)
+            y_var = f_var + obs_noise
             
-            # 2. Sparsity Loss (L1 on Input Layer Variance)
+            nll = gaussian_nll_loss(f_mu, y_var, y_ten)
+            
             l1_loss = 0
             first_layer = self.model.layers[0]
             l1_loss += torch.exp(first_layer.log_variance).sum() * sparsity_weight
             
             total_loss = nll + l1_loss
-            
             total_loss.backward()
             
-            # Clip gradients to prevent variational explosion
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             
             optimizer.step()
@@ -68,13 +88,20 @@ class GPKANRegressor:
             self.history['sparsity'].append(l1_loss.item())
             
             if verbose and (epoch + 1) % 100 == 0:
-                print(f"Epoch {epoch+1}/{epochs} | NLL: {nll.item():.3f} | Sparsity: {l1_loss.item():.3f}")
+                print(f"Epoch {epoch+1}/{epochs} | NLL: {nll.item():.3f} | Sparsity: {l1_loss.item():.3f} | Noise: {obs_noise.item():.4f}")
 
         self.trained = True
         return self
 
-    def predict(self, X):
-        """Returns (Mean, StdDev) as numpy arrays."""
+    def predict(self, X, include_likelihood=True):
+        """
+        Returns (Mean, StdDev).
+        Args:
+            include_likelihood (bool): 
+                If True, adds observation noise to std (Prediction Interval).
+                If False, returns only function uncertainty (Confidence Interval).
+                Use False to visualize the "clean" learned function.
+        """
         if not self.trained:
             raise RuntimeError("Model is not trained yet. Call .fit() first.")
             
@@ -82,56 +109,41 @@ class GPKANRegressor:
         X_ten = self._to_tensor(X)
         
         with torch.no_grad():
-            mu, var = self.model(X_ten)
-            std = torch.sqrt(var)
+            f_mu, f_var = self.model(X_ten)
             
-        return mu.cpu().numpy(), std.cpu().numpy()
+            if include_likelihood:
+                obs_noise = torch.exp(self.likelihood_log_var).clamp(min=self.noise_lower_bound)
+                y_var = f_var + obs_noise
+                std = torch.sqrt(y_var)
+            else:
+                std = torch.sqrt(f_var)
+            
+        return f_mu.cpu().numpy(), std.cpu().numpy()
 
     def explain(self, threshold=0.01):
-        """
-        Prints the Scientific Discovery report.
-        Identifies pruned features and linear vs non-linear relationships.
-        """
         print("\n=== GP-KAN Model Explanation ===")
         layer0 = self.model.layers[0]
-        
-        # Average relevance over output neurons
         relevance = layer0.get_relevance().mean(dim=0)
-        # Get learned scales (Lengthscale or Period)
         scales = torch.exp(layer0.log_scale).mean(dim=0)
         
-        n_features = self.hidden_layers[0]
-        
-        for i in range(n_features):
-            score = relevance[i].item()
-            s = scales[i].item()
-            
-            if score < threshold:
-                status = "[PRUNED] (Irrelevant)"
-                print(f"Feature {i}: {status}")
-            else:
-                # Interpret Shape based on Scale
-                if s > 3.0:
-                    shape = "Linear / Monotonic"
-                elif s < 0.5:
-                    shape = "High Frequency / Complex"
-                else:
-                    shape = "Non-Linear / Smooth"
-                    
-                status = "[ACTIVE]"
+        for i in range(self.hidden_layers[0]):
+            score, s = relevance[i].item(), scales[i].item()
+            status = "[PRUNED]" if score < threshold else "[ACTIVE]"
+            shape = "Linear" if s > 3.0 else ("High Freq" if s < 0.5 else "Smooth/Non-Linear")
+            if status == "[ACTIVE]":
                 print(f"Feature {i}: {status} importance={score:.3f} | Type: {shape} (scale={s:.2f})")
+            else:
+                print(f"Feature {i}: {status} (Irrelevant)")
 
     def plot_diagnosis(self):
-        """Plots loss curves."""
         plt.figure(figsize=(10, 4))
         plt.subplot(1, 2, 1)
         plt.plot(self.history['loss'])
-        plt.title("NLL Loss (Accuracy)")
+        plt.title("NLL Loss")
         plt.grid(True, alpha=0.3)
-        
         plt.subplot(1, 2, 2)
         plt.plot(self.history['sparsity'])
-        plt.title("Sparsity Loss (Pruning)")
+        plt.title("Sparsity Loss")
         plt.grid(True, alpha=0.3)
         plt.show()
 
