@@ -49,7 +49,7 @@ def symbolic_verification(eta, z):
     model = PySRRegressor(
         niterations=30,
         binary_operators=["+", "*", "-", "/"],
-        unary_operators=["square", "sqrt", "exp"],
+        unary_operators=["square", "exp"],
         model_selection="best",
         verbosity=0,
         temp_equation_file=None
@@ -76,8 +76,14 @@ def main():
     
     # Data
     N = 1000
-    x = torch.rand(N, 1) * 4 - 2   
-    t = torch.rand(N_SAMPLES := N, 1) * 1.9 + 0.1 
+
+    t = torch.rand(N_SAMPLES := N, 1) * 1.9 + 0.1
+
+    eta_max = 2.0 / np.sqrt(2.0 * 0.1)
+    eta_sampled = (torch.rand(N, 1) * 2.0 - 1.0) * eta_max
+
+    x = eta_sampled * torch.sqrt(2.0 * t)
+
     u_true = heat_source_solution(x, t, alpha=0.5)
     u_noisy = u_true + torch.randn_like(u_true) * 0.02
     X_train = torch.cat([x, t], dim=1)
@@ -101,7 +107,8 @@ def main():
     with torch.no_grad():
         _, _, z_pred = model(X_train)
     
-    eta = (x / torch.sqrt(2 * t)).numpy().flatten()
+    # We sampled eta directly above, so reuse that (numeric equality holds)
+    eta = eta_sampled.numpy().flatten()
     z = z_pred.numpy().flatten()
     
     # Symbolic Regression Step
