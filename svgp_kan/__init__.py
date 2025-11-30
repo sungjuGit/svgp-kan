@@ -1,6 +1,6 @@
 # svgp_kan/__init__.py
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"  # Bumped for Vision Support
 __author__ = "Open Source Contributor"
 
 # 1. Expose the High-Level API
@@ -10,10 +10,14 @@ from .regressor import GPKANRegressor
 from .model import GPKAN, gaussian_nll_loss
 from .layers import GPKANLayer
 
-# 3. Define what gets imported with "from svgp_kan import *"
+# 3. Expose Vision Module
+from .unet import SVGPUNet
+
+# 4. Define what gets imported with "from svgp_kan import *"
 __all__ = [
     "GPKANRegressor",
     "GPKAN",
     "GPKANLayer",
+    "SVGPUNet",
     "gaussian_nll_loss"
 ]
