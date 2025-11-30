@@ -5,7 +5,7 @@ import numpy as np
 import time
 
 # Import the new U-Net from your library
-from svgp_kan.unet import SVGPUNet
+from svgp_kan import SVGPUNet
 
 def test_vision_pipeline():
     print("=== SVGP-KAN Vision Test (U-Net) ===")
