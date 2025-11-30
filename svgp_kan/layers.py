@@ -9,7 +9,7 @@ class GPKANLayer(nn.Module):
         self.out_features = out_features
         self.kernel_type = kernel_type.lower()
         
-        # --- Learnable Parameters (Exact Original Init) ---
+        # --- Learnable Parameters ---
         self.z = nn.Parameter(
             torch.linspace(-1.5, 1.5, num_inducing)
             .reshape(1, 1, num_inducing)
@@ -19,14 +19,10 @@ class GPKANLayer(nn.Module):
         self.q_log_var = nn.Parameter(torch.ones(out_features, in_features, num_inducing) * -3.0)
         
         self.log_scale = nn.Parameter(torch.zeros(out_features, in_features))
-        # Original Init: -1.0
         self.log_variance = nn.Parameter(torch.zeros(out_features, in_features) - 1.0)
 
     def forward(self, x):
-        """
-        Universal Forward Pass.
-        """
-        # --- 1. Input Parsing (Exact Original Logic) ---
+        # --- 1. Input Parsing ---
         if isinstance(x, torch.Tensor):
             x_mean, x_var = x, torch.zeros_like(x) + 1e-6
         else:
@@ -48,7 +44,6 @@ class GPKANLayer(nn.Module):
             x_mean_flat = x_mean.permute(0, 2, 3, 1).contiguous().view(-1, c)
             x_var_flat = x_var.permute(0, 2, 3, 1).contiguous().view(-1, c)
         else:
-            # Fallback
             x_mean_flat = x_mean.reshape(-1, self.in_features)
             x_var_flat = x_var.reshape(-1, self.in_features)
 
@@ -91,5 +86,5 @@ class GPKANLayer(nn.Module):
 
     def get_relevance(self):
         """Returns the ARD variance magnitude."""
-        # Returns [Out, In] Tensor (Preserves Original Return Type)
-        return torch.exp(self.log_variance).detach().cpu()
+        # FIX: Removed .detach().cpu() so gradients can flow during training!
+        return torch.exp(self.log_variance)

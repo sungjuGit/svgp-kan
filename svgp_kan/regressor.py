@@ -7,7 +7,7 @@ from .model import GPKAN, gaussian_nll_loss
 
 class GPKANRegressor:
     """
-    High-level API for GP-KAN (Scikit-Learn style).
+    High-level API for GP-KAN.
     """
     def __init__(self, hidden_layers=[1, 5, 1], kernel='rbf', num_inducing=20, device='cpu'):
         self.hidden_layers = hidden_layers
@@ -64,6 +64,7 @@ class GPKANRegressor:
             
             nll = gaussian_nll_loss(f_mu, y_var, y_ten)
             
+            # Sparsity Logic
             l1_loss = 0
             first_layer = self.model.layers[0]
             l1_loss += torch.exp(first_layer.log_variance).sum() * sparsity_weight
@@ -86,9 +87,6 @@ class GPKANRegressor:
         return self
 
     def predict(self, X, return_std=True, include_likelihood=True):
-        """
-        Universal Predict: Handles both legacy scripts.
-        """
         if not self.trained:
             raise RuntimeError("Model is not trained yet. Call .fit() first.")
             
@@ -113,8 +111,9 @@ class GPKANRegressor:
     def explain(self, threshold=0.01):
         print("\n=== GP-KAN Model Explanation ===")
         layer0 = self.model.layers[0]
-        relevance = layer0.get_relevance().mean(dim=0)
-        scales = torch.exp(layer0.log_scale).mean(dim=0)
+        # FIX: Explicitly detach/cpu for printing since get_relevance no longer does it
+        relevance = layer0.get_relevance().detach().cpu().mean(dim=0)
+        scales = torch.exp(layer0.log_scale).detach().cpu().mean(dim=0)
         
         for i in range(self.hidden_layers[0]):
             score, s = relevance[i].item(), scales[i].item()
@@ -136,7 +135,7 @@ class GPKANRegressor:
         plt.title("Sparsity Loss")
         plt.grid(True, alpha=0.3)
         plt.show()
-
+    
     def _to_tensor(self, x):
         if isinstance(x, np.ndarray):
             return torch.from_numpy(x).float().to(self.device)
