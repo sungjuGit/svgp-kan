@@ -13,9 +13,12 @@ Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementatio
 
 ## **Installation**
 
-1. Clone the repository:  
-   git clone \[https://github.com/yourusername/svgp-kan.git\] 
-   cd svgp-kan
+1. Clone the repository and move into the directory:  
+
+```bash
+git clone https://github.com/yourusername/svgp-kan.git
+cd svgp-kan
+```
 
 2. Install the library (automatically installs PyTorch dependencies):  
    pip install .
