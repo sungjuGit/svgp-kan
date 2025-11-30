@@ -8,7 +8,6 @@ from .model import GPKAN, gaussian_nll_loss
 class GPKANRegressor:
     """
     High-level API for GP-KAN (Scikit-Learn style).
-    Handles training loops, data conversion, ARD pruning, and visualization.
     """
     def __init__(self, hidden_layers=[1, 5, 1], kernel='rbf', num_inducing=20, device='cpu'):
         self.hidden_layers = hidden_layers
@@ -22,7 +21,6 @@ class GPKANRegressor:
             kernel_type=kernel
         ).to(device)
         
-        # Initialize noise slightly lower (-2.0) to encourage kernel fitting
         self.likelihood_log_var = torch.nn.Parameter(
             torch.tensor(-2.0, device=device) 
         )
@@ -32,22 +30,17 @@ class GPKANRegressor:
         self.noise_lower_bound = 1e-4 
 
     def fit(self, X, y, epochs=1000, lr=0.02, sparsity_weight=0.05, noise_lower_bound=None, verbose=True):
-        """
-        Trains the model.
-        """
         X_ten = self._to_tensor(X)
         y_ten = self._to_tensor(y)
         
-        # --- Logic Check: Auto-adjust Noise Bound ---
         data_var = y_ten.var().item()
-        
         if noise_lower_bound is None:
             self.noise_lower_bound = 1e-4
         else:
             if noise_lower_bound > 0.5 * data_var:
                 safe_bound = 0.5 * data_var
                 if verbose:
-                    print(f"WARNING: noise_lower_bound ({noise_lower_bound:.4f}) is too high for data variance ({data_var:.4f}).")
+                    print(f"WARNING: noise_lower_bound ({noise_lower_bound:.4f}) is too high.")
                     print(f"Auto-adjusting bound to {safe_bound:.4f}.")
                 self.noise_lower_bound = safe_bound
             else:
@@ -64,7 +57,6 @@ class GPKANRegressor:
         
         for epoch in range(epochs):
             optimizer.zero_grad()
-            
             f_mu, f_var = self.model(X_ten)
             
             obs_noise = torch.exp(self.likelihood_log_var).clamp(min=self.noise_lower_bound)
@@ -93,14 +85,9 @@ class GPKANRegressor:
         self.trained = True
         return self
 
-    def predict(self, X, include_likelihood=True):
+    def predict(self, X, return_std=True, include_likelihood=True):
         """
-        Returns (Mean, StdDev).
-        Args:
-            include_likelihood (bool): 
-                If True, adds observation noise to std (Prediction Interval).
-                If False, returns only function uncertainty (Confidence Interval).
-                Use False to visualize the "clean" learned function.
+        Universal Predict: Handles both legacy scripts.
         """
         if not self.trained:
             raise RuntimeError("Model is not trained yet. Call .fit() first.")
@@ -111,6 +98,9 @@ class GPKANRegressor:
         with torch.no_grad():
             f_mu, f_var = self.model(X_ten)
             
+            if not return_std:
+                return f_mu.cpu().numpy()
+
             if include_likelihood:
                 obs_noise = torch.exp(self.likelihood_log_var).clamp(min=self.noise_lower_bound)
                 y_var = f_var + obs_noise
