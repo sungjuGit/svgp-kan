@@ -11,7 +11,7 @@ from .model import GPKAN, gaussian_nll_loss
 from .layers import GPKANLayer
 
 # 3. Expose Vision Module
-from .unet import SVGPUNet
+from .unet import SVGPUNet, SVGPUNet_Fluid
 
 # 4. Define what gets imported with "from svgp_kan import *"
 __all__ = [
@@ -19,5 +19,6 @@ __all__ = [
     "GPKAN",
     "GPKANLayer",
     "SVGPUNet",
+    "SVGPUNet_Fluid",
     "gaussian_nll_loss"
 ]
