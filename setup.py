@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="svgp_kan",
-    version="0.2.0",  # Updated for Vision Support
+    version="0.2.1",  # Updated for Vision Support
     description="Scalable Probabilistic KANs & U-Nets (Vision/Tabular) using Sparse Variational GPs",
     author="Open Source Contributor",
     url="https://github.com/sungjuGit/svgp-kan",  # Added your repo link
