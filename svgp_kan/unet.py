@@ -29,10 +29,10 @@ class SVGPUNet(nn.Module):
 
     def conv_block(self, in_c, out_c):
         return nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, padding=1),
+            nn.Conv2d(in_c, out_c, 3, padding=1,padding_mode='circular'),
             nn.BatchNorm2d(out_c),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_c, out_c, 3, padding=1),
+            nn.Conv2d(out_c, out_c, 3, padding=1,padding_mode='circular'),
             nn.BatchNorm2d(out_c),
             nn.ReLU(inplace=True)
         )
@@ -63,7 +63,7 @@ class SVGPUNet(nn.Module):
     
 
 class SVGPUNet_Fluid(SVGPUNet):
-    def __init__(self, in_channels=1, base=32):
+    def __init__(self, in_channels=1, base=16):
         # Initialize parent with dummy classes
         super().__init__(in_channels=in_channels, num_classes=2, base=base)
         
@@ -83,7 +83,7 @@ class SVGPUNet_Fluid(SVGPUNet):
         
         # GP Bottleneck (Latent Uncertainty)
         # This injects stochasticity into the latent space
-        z_mu, z_var = self.bottleneck_gp(e2)
+        z_mu, z_var = self.bottleneck_gp(p2)
         
         # Use z_mu for reconstruction flow
         # (In a full Bayesian Network, we would sample z ~ N(mu, var))
