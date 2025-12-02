@@ -138,11 +138,17 @@ class MyCustomCNN(nn.Module):
 
 If you use this code or concepts in your research, please cite our arXiv manuscript:
 
+## Citation
+
+If you use **SVGP-KAN** in your research, please cite the following paper:
+
 ```bibtex
 @article{ju2025svgpkan,
-  title={Scalable and Interpretable Scientific Discovery via Sparse Variational Gaussian Process Kolmogorov-Arnold Networks},
-  author={Ju, Y. S.},
-  journal={arXiv preprint},
-  year={2025}
+  title   = {Scalable and Interpretable Scientific Discovery via Sparse Variational Gaussian Process Kolmogorov-Arnold Networks (SVGP-KAN)},
+  author  = {Ju, Sungtaek},
+  journal = {arXiv preprint arXiv:2512.00260},
+  year    = {2025},
+  doi     = {10.48550/arXiv.2512.00260},
+  url     = {https://arxiv.org/abs/2512.00260}
 }
 ```
