@@ -136,10 +136,6 @@ class MyCustomCNN(nn.Module):
 
 ## Citation
 
-If you use this code or concepts in your research, please cite our arXiv manuscript:
-
-## Citation
-
 If you use **SVGP-KAN** in your research, please cite the following paper:
 
 ```bibtex
