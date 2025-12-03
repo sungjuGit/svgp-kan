@@ -8,6 +8,7 @@ class GPKANLayer(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.kernel_type = kernel_type.lower()
+        self.num_inducing = num_inducing
         
         # --- Learnable Parameters ---
         self.z = nn.Parameter(
@@ -84,7 +85,53 @@ class GPKANLayer(nn.Module):
             y_var = y_var_flat.reshape(out_shape)
             return y_mean, y_var
 
+    def compute_kl(self, jitter=1e-4):
+        """
+        Compute KL divergence KL[q(u)||p(u)] for this layer.
+        
+        This is the proper Bayesian regularization term for variational inference.
+        
+        Returns:
+            kl: scalar KL divergence
+        """
+        # Import here to avoid circular dependency
+        try:
+            from .kl_divergence import compute_kl_divergence
+        except ImportError:
+            # Fallback if kl_divergence.py is not available (backward compatibility)
+            # Return zero so old code still works
+            import warnings
+            warnings.warn(
+                "kl_divergence module not found. KL term will be zero. "
+                "To enable proper Bayesian inference, ensure kl_divergence.py is in the package."
+            )
+            return torch.tensor(0.0, device=self.q_mu.device)
+        
+        # Get constrained parameters (same as used in forward pass)
+        constrained_var = torch.exp(self.log_variance).clamp(min=1e-5)
+        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
+        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        
+        # Compute KL divergence
+        # Note: Only RBF kernel KL is implemented; cosine kernel needs separate implementation
+        if self.kernel_type == 'rbf':
+            kl = compute_kl_divergence(
+                q_mu=self.q_mu,
+                q_log_var=self.q_log_var,
+                z=self.z,
+                lengthscale=constrained_scale,
+                variance=constrained_var,
+                jitter=jitter
+            )
+        else:
+            # For non-RBF kernels, return zero (can implement later if needed)
+            import warnings
+            warnings.warn(f"KL divergence not implemented for kernel type '{self.kernel_type}'. Returning zero.")
+            kl = torch.tensor(0.0, device=self.q_mu.device)
+        
+        return kl
+
     def get_relevance(self):
         """Returns the ARD variance magnitude."""
-        # FIX: Removed .detach().cpu() so gradients can flow during training!
+
         return torch.exp(self.log_variance)

@@ -1,7 +1,7 @@
 # svgp_kan/__init__.py
 
-__version__ = "0.2.0"  # Bumped for Vision Support
-__author__ = "Open Source Contributor"
+__version__ = "0.3.0"  # Bumped for major bug fixes
+__author__ = "sungju"
 
 # 1. Expose the High-Level API
 from .regressor import GPKANRegressor
@@ -9,6 +9,8 @@ from .regressor import GPKANRegressor
 # 2. Expose the Low-Level Components
 from .model import GPKAN, gaussian_nll_loss
 from .layers import GPKANLayer
+from .kl_divergence import compute_kl_divergence
+from .kernels import rbf_moment_matching
 
 # 3. Expose Vision Module
 from .unet import SVGPUNet, SVGPUNet_Fluid
@@ -20,5 +22,7 @@ __all__ = [
     "GPKANLayer",
     "SVGPUNet",
     "SVGPUNet_Fluid",
-    "gaussian_nll_loss"
+    "gaussian_nll_loss",
+    "compute_kl_divergence",
+    "rbf_moment_matching",
 ]

@@ -29,10 +29,10 @@ class SVGPUNet(nn.Module):
 
     def conv_block(self, in_c, out_c):
         return nn.Sequential(
-            nn.Conv2d(in_c, out_c, 3, padding=1,padding_mode='circular'),
+            nn.Conv2d(in_c, out_c, 3, padding=1, padding_mode='circular'),
             nn.BatchNorm2d(out_c),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_c, out_c, 3, padding=1,padding_mode='circular'),
+            nn.Conv2d(out_c, out_c, 3, padding=1, padding_mode='circular'),
             nn.BatchNorm2d(out_c),
             nn.ReLU(inplace=True)
         )
@@ -61,15 +61,25 @@ class SVGPUNet(nn.Module):
         
         return self.final(d1), var.sum(dim=1, keepdim=True)
     
+    def compute_kl(self, jitter=1e-4):
+        """Compute KL divergence for the bottleneck GP layer."""
+        return self.bottleneck_gp.compute_kl(jitter=jitter)
+
 
 class SVGPUNet_Fluid(SVGPUNet):
+    """
+        
+    This version implements  Bayesian inference by:
+    1. Sampling z ~ N(mu, var) during training (reparameterization trick)
+    2. Using mean z = mu during evaluation
+    
+    During training, the behavior uses sampled z instead of just mu.
+    """
     def __init__(self, in_channels=1, base=16):
         # Initialize parent with dummy classes
         super().__init__(in_channels=in_channels, num_classes=2, base=base)
         
-        # REPLACE the final layer
-        # Old: self.final = nn.Conv2d(base, num_classes, kernel_size=1)   
-        # New: Output 2 channels (Mean, Log_Variance)
+        # Output 2 channels (Mean, Log_Variance)
         self.final = nn.Conv2d(base, 2, kernel_size=1)
         
         # Optional: Initialize log_var to be low (stable start)
@@ -82,15 +92,19 @@ class SVGPUNet_Fluid(SVGPUNet):
         p2 = self.pool2(e2)
         
         # GP Bottleneck (Latent Uncertainty)
-        # This injects stochasticity into the latent space
         z_mu, z_var = self.bottleneck_gp(p2)
         
-        # Use z_mu for reconstruction flow
-        # (In a full Bayesian Network, we would sample z ~ N(mu, var))
-        # For efficiency, we pass the mean, but the GP regularization 
-        # constrains how this mean is learned.
+        # Sampling during training
+        # This is the reparameterization trick: z = mu + eps * sqrt(var)
+        if self.training:
+            std = torch.sqrt(torch.clamp(z_var, min=1e-6))
+            eps = torch.randn_like(std)
+            z = z_mu + eps * std  
+        else:
+            z = z_mu  # Use mean during evaluation
         
-        d2 = self.up2(z_mu)
+        # Decoder uses the sampled (or mean) latent representation
+        d2 = self.up2(z)
         d2 = torch.cat([d2, e2], dim=1)
         d2 = self.dec2(d2)
         

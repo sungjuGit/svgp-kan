@@ -1,5 +1,7 @@
 # SVGP-KAN: Sparse Variational Gaussian Process Kolmogorov-Arnold Networks
 
+# SVGP-KAN: Sparse Variational Gaussian Process Kolmogorov-Arnold Networks
+
 **SVGP-KAN** is a library for building interpretable, probabilistic, and scalable neural networks. It merges the architecture of **Kolmogorov-Arnold Networks (KANs)** with the uncertainty quantification of **Sparse Variational Gaussian Processes**.
 
 Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementation scales linearly $O(N)$ with data size, making it usable for real-world scientific datasets.
@@ -7,10 +9,28 @@ Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementatio
 ## Key Features
 
   * **Probabilistic:** Outputs mean predictions and confidence intervals (uncertainty).
+  * **Proper Bayesian Inference:** Implements full ELBO optimization with KL divergence for well-calibrated uncertainty.
   * **Scalable:** Uses inducing points and matrix-based batching to train on large datasets (100k+ samples).
   * **Scientific Discovery:** Includes **Automatic Relevance Determination (ARD)** to automatically identify signal vs. noise features.
   * **Computer Vision:** Natively supports 4D inputs (images) for probabilistic U-Nets and CNNs.
   * **Universal:** The RBF kernel naturally adapts to learn periodic, linear, or complex non-linear functions.
+
+## Recent Updates (v0.3)
+
+### ✅ Proper Bayesian Inference
+The library implements **full ELBO optimization** with KL divergence regularization:
+
+```python
+# Loss = NLL + λ × KL[q(u)||p(u)]
+loss = gaussian_nll_loss(pred_mean, pred_var, target) + kl_weight * model.compute_kl()
+```
+
+This ensures:
+- **Well-calibrated uncertainty**: Predicted intervals match actual error rates
+- **Bayesian regularization**: Prevents overfitting through principled priors
+- **Theoretically grounded**: Matches standard sparse variational GP formulations
+
+All models (`GPKANLayer`, `GPKAN`, `SVGPUNet`, `GPKANRegressor`) now include `compute_kl()` methods for easy integration.
 
 ## Installation
 
@@ -29,7 +49,46 @@ Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementatio
 
 ## Quick Start
 
-### 1\. Scientific Discovery (Feature Selection)
+### 1. Basic Regression with Proper Bayesian Inference
+
+```python
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from svgp_kan import GPKAN, gaussian_nll_loss
+
+# Create model
+model = GPKAN(layer_dims=[2, 5, 1], kernel='rbf')
+optimizer = optim.Adam(model.parameters(), lr=0.01)
+
+# Training loop with KL divergence
+for epoch in range(500):
+    # Forward pass
+    pred_mean, pred_var = model(X_train)
+    
+    # Compute ELBO loss
+    nll = gaussian_nll_loss(pred_mean, pred_var, y_train)
+    kl = model.compute_kl()
+    loss = nll + 0.01 * kl  # λ = 0.01 (adjustable)
+    
+    # Backprop
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    
+    if epoch % 100 == 0:
+        print(f"Epoch {epoch}: NLL={nll.item():.4f}, KL={kl.item():.2f}")
+
+# Predict with uncertainty
+pred_mean, pred_var = model(X_test)
+pred_std = torch.sqrt(pred_var)
+```
+
+**Key Parameters:**
+- `kl_weight` (λ): Typically 0.001-0.1. Higher → stronger regularization, more conservative uncertainty
+- Set to 0 to disable Bayesian inference (may not be suitable for uncertainty quantification)
+
+### 2. Scientific Discovery (Feature Selection)
 
 Train a model to identify which inputs matter and which are noise.
 
@@ -47,7 +106,7 @@ y = y.reshape(-1, 1)
 
 # 2. Train Scientist Model
 # We use RBF kernels as universal approximators
-model = GPKANRegressor(hidden_layers=[3, 5, 1], kernel='rbf')
+model = GPKANRegressor(hidden_layers=[3, 5, 1], kernel='rbf', use_kl=True, kl_weight=0.01)
 model.fit(X, y, epochs=500, sparsity_weight=0.05)
 
 # 3. Interpret Results
@@ -61,53 +120,88 @@ model.explain()
 mu, std = model.predict(X)
 ```
 
-### 2\. Running the Benchmarks
+## 🔬 Uncertainty Quantification Studies
 
-To reproduce the results from our paper (Friedman \#1 dataset), run the included example script:
+The repository includes three validation studies demonstrating proper Bayesian inference:
 
+### Study A: Heteroscedastic Noise Calibration
+Validates that predicted uncertainties correlate with actual errors in spatially-varying noise:
 ```bash
-python examples/benchmark_friedman.py
+python study_a_revised.py
 ```
+**Outputs:** Calibration plots, correlation metrics (ρ ≈ 0.55), coverage analysis
 
-This will generate high-resolution diagnostic plots in your `examples/` directory:
+### Study B: Multi-Step Prediction Uncertainty Growth
+Demonstrates uncertainty propagation in sequential forecasting of fluid dynamics:
+```bash
+python study_b_revised.py
+```
+**Outputs:** Temporal uncertainty evolution, epistemic uncertainty growth (2-3×)
 
-  * `friedman_feature_importance.png`
-  * `friedman_interaction_surface.png`
+### Study C: Out-of-Distribution Detection
+Shows elevated uncertainty on anomalous data (MNIST):
+```bash
+python study_c_revised.py
+```
+**Outputs:** OOD/ID uncertainty ratio (5-10×), separation analysis
 
-## 👁️ U-Net Support (New in v0.2)
+## 💻 Computer Vision Support
 
-SVGP-KAN now natively supports U-Net for **2D Computer Vision** tasks (Segmentation, Reconstruction) and other applications via the `SVGPUNet` module. This allows you to generate **calibrated uncertainty maps** for images, essential for medical imaging and safety-critical applications.
+SVGP-KAN natively supports U-Net for **2D Computer Vision** tasks (Segmentation, Reconstruction) with **calibrated uncertainty maps**.
 
 **Why use SVGP-KAN for Vision?**
 
   * **Uncertainty:** Returns a pixel-wise "confusion map" where the model is unsure (e.g., ambiguous tumor boundaries).
   * **Data Efficiency:** GP inductive biases often perform better on small datasets (common in scientific imaging).
+  * **Proper Calibration:** KL divergence ensures uncertainties are well-calibrated.
 
 ### Usage Example
 
 ```python
 import torch
+import torch.optim as optim
 import matplotlib.pyplot as plt
-from svgp_kan import SVGPUNet
+from svgp_kan import SVGPUNet_Fluid, gaussian_nll_loss
 
 # 1. Setup Device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # 2. Initialize the Probabilistic U-Net
-# Input: 1 Channel (Grayscale), Output: 2 Classes (Background, Object)
-model = SVGPUNet(in_channels=1, num_classes=2, base=32).to(device)
+model = SVGPUNet_Fluid(in_channels=1, base=32).to(device)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# 3. Forward Pass
-# Input: [Batch, Channel, Height, Width]
-images = torch.randn(4, 1, 128, 128).to(device)
-logits, uncertainty = model(images)
+# 3. Training Loop with KL Divergence
+for epoch in range(500):
+    # Forward pass
+    images = torch.randn(8, 1, 64, 64).to(device)
+    targets = torch.randn(8, 1, 64, 64).to(device)
+    
+    pred_mean, pred_var = model(images)
+    
+    # ELBO loss
+    nll = gaussian_nll_loss(pred_mean, pred_var, targets)
+    kl = model.compute_kl()
+    loss = nll + 0.01 * kl
+    
+    # Backprop
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
 
-# logits:      [4, 2, 128, 128] -> Standard segmentation mask
-# uncertainty: [4, 1, 128, 128] -> Variance map (High value = High uncertainty)
+# 4. Inference with Uncertainty
+model.eval()
+with torch.no_grad():
+    pred_mean, pred_var = model(test_images)
+    uncertainty = torch.sqrt(pred_var)
 
-# 4. Visualization
-plt.imshow(uncertainty[0, 0].cpu().detach(), cmap='hot')
-plt.title("Model Uncertainty / Confusion Map")
+# 5. Visualization
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.imshow(pred_mean[0, 0].cpu(), cmap='RdBu_r')
+plt.title("Prediction")
+plt.subplot(1, 2, 2)
+plt.imshow(uncertainty[0, 0].cpu(), cmap='hot')
+plt.title("Uncertainty Map")
 plt.show()
 ```
 
@@ -131,8 +225,51 @@ class MyCustomCNN(nn.Module):
         # No flattening needed!
         # GPKANLayer automatically processes spatial grid
         x_mean, x_var = self.gp_layer(x)
-        return x_mean
+        return x_mean, x_var
 ```
+
+## 📚 API Reference
+
+### Core Components
+
+- **`GPKANLayer`**: Single sparse variational GP layer with `compute_kl()` method
+- **`GPKAN`**: Multi-layer KAN architecture with automatic KL aggregation
+- **`SVGPUNet`**: U-Net architecture for 2D images with uncertainty
+- **`SVGPUNet_Fluid`**: Specialized U-Net for fluid dynamics
+- **`GPKANRegressor`**: High-level scikit-learn-style interface
+- **`gaussian_nll_loss`**: Negative log-likelihood for mean and variance
+- **`compute_kl_divergence`**: KL divergence KL[q(u)||p(u)] for inducing variables
+
+### KL Weight Selection
+
+The KL weight (λ) controls the trade-off between data fitting and regularization:
+
+- **λ = 0**: No Bayesian regularization (not recommended)
+- **λ = 0.001-0.01**: Weak regularization, prioritizes data fit
+- **λ = 0.01-0.1**: Balanced (recommended for most applications)
+- **λ = 0.1-1.0**: Strong regularization, conservative uncertainty
+
+**Rule of thumb:** Start with λ = 0.01 and adjust based on:
+- If uncertainties are too small → increase λ
+- If model underfits → decrease λ
+- Use validation set calibration to tune
+
+## 🔧 Troubleshooting
+
+### "Model missing compute_kl()"
+You're using an old version. Make sure you have:
+- `kl_divergence.py` module
+- Updated `layers.py`, `model.py`, `unet.py` with `compute_kl()` methods
+
+### KL is zero
+- Check `use_kl=True` in training
+- Verify model has `compute_kl()` method
+- Make sure `kl_weight > 0`
+
+### Uncertainties not calibrated
+- Try different KL weights (0.001, 0.01, 0.1)
+- Increase training epochs
+- Check if using proper `gaussian_nll_loss`
 
 ## Citation
 
