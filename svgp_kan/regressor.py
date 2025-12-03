@@ -33,7 +33,7 @@ class GPKANRegressor:
         self.noise_lower_bound = 1e-4 
 
     def fit(self, X, y, epochs=1000, lr=0.02, sparsity_weight=0.05, 
-            kl_weight=1.0, use_kl=True, noise_lower_bound=None, verbose=True):
+            kl_weight=0.01, use_kl=True, noise_lower_bound=None, verbose=True):
         """
         Train the GP-KAN model.
         
