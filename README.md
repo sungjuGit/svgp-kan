@@ -120,30 +120,18 @@ model.explain()
 mu, std = model.predict(X)
 ```
 
-## 🔬 Uncertainty Quantification Studies
+### 3 Uncertainty Quantification Studies
 
 The repository includes three validation studies demonstrating proper Bayesian inference:
 
-### Study A: Heteroscedastic Noise Calibration
+#### Study A: Heteroscedastic Noise Calibration
 Validates that predicted uncertainties correlate with actual errors in spatially-varying noise:
-```bash
-python study_a_revised.py
-```
-**Outputs:** Calibration plots, correlation metrics (ρ ≈ 0.55), coverage analysis
 
-### Study B: Multi-Step Prediction Uncertainty Growth
+#### Study B: Multi-Step Prediction Uncertainty Growth
 Demonstrates uncertainty propagation in sequential forecasting of fluid dynamics:
-```bash
-python study_b_revised.py
-```
-**Outputs:** Temporal uncertainty evolution, epistemic uncertainty growth (2-3×)
 
-### Study C: Out-of-Distribution Detection
+#### Study C: Out-of-Distribution Detection
 Shows elevated uncertainty on anomalous data (MNIST):
-```bash
-python study_c_revised.py
-```
-**Outputs:** OOD/ID uncertainty ratio (5-10×), separation analysis
 
 ## 💻 Computer Vision Support
 
