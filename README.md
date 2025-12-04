@@ -1,7 +1,5 @@
 # SVGP-KAN: Sparse Variational Gaussian Process Kolmogorov-Arnold Networks
 
-# SVGP-KAN: Sparse Variational Gaussian Process Kolmogorov-Arnold Networks
-
 **SVGP-KAN** is a library for building interpretable, probabilistic, and scalable neural networks. It merges the architecture of **Kolmogorov-Arnold Networks (KANs)** with the uncertainty quantification of **Sparse Variational Gaussian Processes**.
 
 Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementation scales linearly $O(N)$ with data size, making it usable for real-world scientific datasets.
