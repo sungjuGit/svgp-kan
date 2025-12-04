@@ -124,16 +124,13 @@ mu, std = model.predict(X)
 
 The repository includes three validation studies demonstrating proper Bayesian inference:
 
-#### Study A: Heteroscedastic Noise Calibration
-Validates that predicted uncertainties correlate with actual errors in spatially-varying noise:
+- Study A: Heteroscedastic Noise Calibration: validates that predicted uncertainties correlate with actual errors in spatially-varying noise:
 
-#### Study B: Multi-Step Prediction Uncertainty Growth
-Demonstrates uncertainty propagation in sequential forecasting of fluid dynamics:
+- Study B: Multi-Step Prediction Uncertainty Growth: demonstrates uncertainty propagation in sequential forecasting of fluid dynamics:
 
-#### Study C: Out-of-Distribution Detection
-Shows elevated uncertainty on anomalous data (MNIST):
+- Study C: Out-of-Distribution Detection: shows elevated uncertainty on anomalous data (MNIST)
 
-## 💻 Computer Vision Support
+## Computer Vision Support
 
 SVGP-KAN natively supports U-Net for **2D Computer Vision** tasks (Segmentation, Reconstruction) with **calibrated uncertainty maps**.
 
@@ -216,7 +213,7 @@ class MyCustomCNN(nn.Module):
         return x_mean, x_var
 ```
 
-## 📚 API Reference
+## API Reference
 
 ### Core Components
 
@@ -242,7 +239,7 @@ The KL weight (λ) controls the trade-off between data fitting and regularizatio
 - If model underfits → decrease λ
 - Use validation set calibration to tune
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### "Model missing compute_kl()"
 You're using an old version. Make sure you have:
