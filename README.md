@@ -256,15 +256,24 @@ You're using an old version. Make sure you have:
 
 ## Citation
 
-If you use **SVGP-KAN** in your research, please cite the following paper:
+If you use **SVGP-KAN** in your research, please cite the following papers:
 
 ```bibtex
 @article{ju2025svgpkan,
   title   = {Scalable and Interpretable Scientific Discovery via Sparse Variational Gaussian Process Kolmogorov-Arnold Networks (SVGP-KAN)},
-  author  = {Ju, Sungtaek},
+  author  = {Ju, Y. Sungtaek},
   journal = {arXiv preprint arXiv:2512.00260},
   year    = {2025},
   doi     = {10.48550/arXiv.2512.00260},
   url     = {https://arxiv.org/abs/2512.00260}
+}
+@article{ju2025svgpkanUQ,
+  title   = {Uncertainty Quantification for Scientific Machine Learning using Sparse
+  Variational Gaussian Process Kolmogorov-Arnold Networks (SVGP KAN)},
+  author  = {Ju, Y. Sungtaek},
+  journal = {arXiv preprint arXiv:2512.05306},
+  year    = {2025},
+  doi     = {10.48550/arXiv.2512.05306},
+  url     = {http://arxiv.org/abs/2512.05306}
 }
 ```
