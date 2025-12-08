@@ -118,7 +118,7 @@ model.explain()
 mu, std = model.predict(X)
 ```
 
-### 3 Uncertainty Quantification Studies
+### 3. Uncertainty Quantification Studies
 
 The repository includes three validation studies demonstrating proper Bayesian inference:
 
@@ -227,7 +227,7 @@ class MyCustomCNN(nn.Module):
 
 The KL weight (λ) controls the trade-off between data fitting and regularization:
 
-- **λ = 0**: No Bayesian regularization (not recommended)
+- **λ = 0**: No explicit Bayesian regularization
 - **λ = 0.001-0.01**: Weak regularization, prioritizes data fit
 - **λ = 0.01-0.1**: Balanced (recommended for most applications)
 - **λ = 0.1-1.0**: Strong regularization, conservative uncertainty
@@ -237,26 +237,10 @@ The KL weight (λ) controls the trade-off between data fitting and regularizatio
 - If model underfits → decrease λ
 - Use validation set calibration to tune
 
-## Troubleshooting
-
-### "Model missing compute_kl()"
-You're using an old version. Make sure you have:
-- `kl_divergence.py` module
-- Updated `layers.py`, `model.py`, `unet.py` with `compute_kl()` methods
-
-### KL is zero
-- Check `use_kl=True` in training
-- Verify model has `compute_kl()` method
-- Make sure `kl_weight > 0`
-
-### Uncertainties not calibrated
-- Try different KL weights (0.001, 0.01, 0.1)
-- Increase training epochs
-- Check if using proper `gaussian_nll_loss`
 
 ## Citation
 
-If you use **SVGP-KAN** in your research, please cite the following papers:
+If you use **SVGP-KAN**, its ideas, and/or examples in your research, please cite the following papers:
 
 ```bibtex
 @article{ju2025svgpkan,
