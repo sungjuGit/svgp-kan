@@ -143,7 +143,7 @@ def train(model, loader, device, epochs=10, use_kl=True, kl_weight=0.01):
             # Reconstruction loss
             loss_recon = F.mse_loss(recon, x)
             
-            # KL divergence (NEW!)
+            # KL divergence
             if use_kl:
                 try:
                     kl = model.bottleneck.compute_kl()

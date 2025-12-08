@@ -86,22 +86,22 @@ def run_study_d():
         param_dim=2, 
         spatial_dim=1, 
         latent_dim=8,
-        branch_depth=[16,16], #[32, 32],
-        trunk_depth=[16,16], #[32, 32],
-        num_inducing=30
+        branch_depth=[32, 32],
+        trunk_depth=[32, 32],
+        num_inducing=40
     )
     
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
+    optimizer = optim.Adam(model.parameters(), lr=0.005)
     
     # 4. Train
     print("Training...")
-    for epoch in range(801):
+    for epoch in range(1501):
         optimizer.zero_grad()
         mu, var = model(train_params, train_coords)
         nll = gaussian_nll_loss(mu, var, train_y)
         kl = model.compute_total_kl()
         
-        loss = nll + min(0.01, epoch/500 * 0.01) * kl
+        loss = nll + min(1e-4, epoch/500 * 0.01) * kl
         
         loss.backward()
         optimizer.step()
