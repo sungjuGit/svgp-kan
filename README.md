@@ -13,7 +13,7 @@ Unlike the original GP-KAN (which scales cubically $O(N^3)$), this implementatio
   * **Computer Vision:** Natively supports 4D inputs (images) for probabilistic U-Nets and CNNs.
   * **Universal:** The RBF kernel naturally adapts to learn periodic, linear, or complex non-linear functions.
 
-## Recent Updates (v0.3)
+## Recent Updates (v0.3 and 0.4)
 
 ### ✅ Proper Bayesian Inference
 The library implements **full ELBO optimization** with KL divergence regularization:
