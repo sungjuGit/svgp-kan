@@ -1,6 +1,6 @@
 # svgp_kan/__init__.py
 
-__version__ = "0.4.0"  # Bumped for POD
+__version__ = "0.4.1"  # Bumped for POD and fixes for orthogonal variance
 __author__ = "sungjuGit"
 
 # 1. Expose the High-Level API
