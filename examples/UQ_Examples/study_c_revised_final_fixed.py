@@ -15,8 +15,8 @@ from svgp_kan import GPKANLayer
 # =============================================================================
 # NOTE: For OOD detection, we intentionally do NOT use KL divergence
 # The natural GP variance growth on OOD samples is the detection mechanism
-USE_KL = False          # KL regularization destroys OOD separation!
-KL_WEIGHT = 0.0         # Not used when USE_KL=False
+USE_KL = True          # KL regularization destroys OOD separation!
+KL_WEIGHT = 0.001         # Not used when USE_KL=False
 EPOCHS = 70
 BATCH_SIZE = 64
 NORMAL_DIGIT = 0
