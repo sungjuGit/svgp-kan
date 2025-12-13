@@ -11,7 +11,12 @@ from .model import GPKAN, gaussian_nll_loss
 from .layers import GPKANLayer
 from .kl_divergence import compute_kl_divergence
 from .kernels import rbf_moment_matching
+from .training_utils import (
+    EarlyStopping, ModelCheckpoint, KLAnnealingSchedule, 
+    GradientClipper, create_lr_scheduler
+)
 from .svgpkanpod import SVGPKanPOD
+
 
 # 3. Expose Vision Module
 from .unet import SVGPUNet, SVGPUNet_Fluid
