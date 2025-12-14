@@ -15,7 +15,7 @@ from .training_utils import (
     EarlyStopping, ModelCheckpoint, KLAnnealingSchedule, 
     GradientClipper, create_lr_scheduler
 )
-from .svgpkanpod import SVGPKanPOD
+from .svgpkanpod import SVGPKanPOD, train_svgpkanpod
 
 
 # 3. Expose Vision Module
