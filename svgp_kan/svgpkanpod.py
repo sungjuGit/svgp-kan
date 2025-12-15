@@ -1,4 +1,3 @@
-# svgp_kan/kanpod.py
 """
 SVGPKanPOD: Flexible Probabilistic Neural Operator via SVGP-KANs.
 
@@ -42,6 +41,7 @@ Examples:
     pred_mu, pred_var = pod(branch_inputs=t, trunk_inputs=(x,y))
 """
 
+
 import torch
 import torch.nn as nn
 from .model import GPKAN, gaussian_nll_loss
@@ -78,11 +78,11 @@ class SVGPKanPOD(nn.Module):
                  learn_noise=True):
         super().__init__()
         
-        # Default hidden layers
+        # Default hidden layers - single layer like original
         if branch_hidden is None:
-            branch_hidden = [32, 32]
+            branch_hidden = [32]
         if trunk_hidden is None:
-            trunk_hidden = [32, 32]
+            trunk_hidden = [32]
         
         self.latent_dim = latent_dim
         self.branch_input_dim = branch_input_dim
