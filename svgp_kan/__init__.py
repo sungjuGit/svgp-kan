@@ -1,6 +1,6 @@
 # svgp_kan/__init__.py
 
-__version__ = "0.4.4"  # strict_mean_field now enforces constraints DURING training (fixed Z, bounded lengthscale)
+__version__ = "0.4.4"
 __author__ = "sungjuGit"
 
 # 1. Expose the High-Level API
