@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="svgp_kan",
-    version="0.4.3",  # bug fixes
+    version="0.4.4",  # bug fixes
     description="Scalable Probabilistic KANs using Sparse Variational GPs",
     author="Sungtaek Ju",
     url="https://github.com/sungjuGit/svgp-kan",  # Added your repo link

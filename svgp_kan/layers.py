@@ -1,5 +1,5 @@
 """
-layers.py - SVGP-KAN Layer implementation
+layers.py - SVGP-KAN Layer implementation (v0.4.4)
 
 Each layer implements a Sparse Variational GP on each edge of a KAN,
 enabling probabilistic inference with uncertainty propagation.
@@ -7,10 +7,13 @@ enabling probabilistic inference with uncertainty propagation.
 MODES:
 - strict_mean_field=False (DEFAULT): Uses clamping heuristic for orthogonal variance.
   Backward compatible. Works well in practice even when approximation assumptions
-  are not strictly satisfied.
+  are not strictly satisfied. Inducing points and lengthscales are fully learnable.
   
-- strict_mean_field=True: Enforces that inducing points are well-separated.
-  Will automatically reduce num_inducing if necessary and print a warning.
+- strict_mean_field=True: Enforces mean-field approximation validity DURING TRAINING:
+  1. Inducing points are FIXED (not learnable) - evenly spaced in [z_min, z_max]
+  2. Lengthscales are BOUNDED above by spacing/2 - guarantees separation
+  
+  This sacrifices some flexibility in exchange for guaranteed mathematical validity.
 """
 
 import torch
@@ -21,7 +24,6 @@ from .kernels import (
     cosine_moment_matching, 
     check_mean_field_assumptions,
     check_mean_field_validity,
-    adjust_inducing_points_for_mean_field,
     compute_recommended_num_inducing
 )
 
@@ -42,11 +44,14 @@ class GPKANLayer(nn.Module):
         out_features: Number of output features
         num_inducing: Number of inducing points per edge
         kernel_type: 'rbf' or 'cosine'
-        strict_mean_field: If True, enforce mean-field approximation assumptions
-            by adjusting num_inducing if necessary. Default False (backward compatible).
+        strict_mean_field: If True, enforce mean-field approximation:
+            - Inducing points are FIXED (not learnable)
+            - Lengthscales are BOUNDED by max_lengthscale = spacing / 2
+            Default False (backward compatible).
         z_min: Minimum inducing point location (default: -1.5)
         z_max: Maximum inducing point location (default: 1.5)
-        initial_lengthscale: Initial lengthscale for strict_mean_field check (default: 1.0)
+        initial_lengthscale: Initial lengthscale (default: 1.0). In strict mode,
+            this is clamped to max_lengthscale if necessary.
     """
     
     def __init__(self, in_features, out_features, num_inducing=20, kernel_type='rbf',
@@ -58,45 +63,108 @@ class GPKANLayer(nn.Module):
         self.strict_mean_field = strict_mean_field
         self.z_min = z_min
         self.z_max = z_max
+        self.num_inducing = num_inducing
         
         # Store original request for reference
         self._requested_num_inducing = num_inducing
         
-        # Adjust num_inducing if strict_mean_field is enabled
+        # Compute spacing and constraints
+        domain_size = z_max - z_min
+        self.fixed_spacing = domain_size / max(num_inducing - 1, 1)
+        
+        # Maximum lengthscale for mean-field validity: spacing / 2
+        self.max_lengthscale = self.fixed_spacing / 2.0
+        self.min_lengthscale = 0.01  # Minimum for numerical stability
+        
         if strict_mean_field:
-            num_inducing, was_adjusted = adjust_inducing_points_for_mean_field(
-                num_inducing=num_inducing,
-                z_min=z_min,
-                z_max=z_max,
-                lengthscale=initial_lengthscale,
-                min_separation_factor=2.0,
-                verbose=True
+            # Print configuration info
+            self._print_strict_mode_info(initial_lengthscale)
+            
+            # FIXED inducing points - register as buffer, not parameter
+            z_fixed = (
+                torch.linspace(z_min, z_max, num_inducing)
+                .reshape(1, 1, num_inducing)
+                .repeat(out_features, in_features, 1)
             )
-            self._was_adjusted = was_adjusted
+            self.register_buffer('z', z_fixed)
+            
+            # Clamp initial lengthscale to valid range
+            init_ls = min(initial_lengthscale, self.max_lengthscale * 0.9)
+            init_ls = max(init_ls, self.min_lengthscale)
         else:
-            self._was_adjusted = False
-        
-        self.num_inducing = num_inducing
-        
-        # --- Learnable Parameters ---
-        # Inducing points initialized uniformly in [z_min, z_max]
-        self.z = nn.Parameter(
-            torch.linspace(z_min, z_max, num_inducing)
-            .reshape(1, 1, num_inducing)
-            .repeat(out_features, in_features, 1)
-        )
+            # LEARNABLE inducing points (original behavior)
+            self.z = nn.Parameter(
+                torch.linspace(z_min, z_max, num_inducing)
+                .reshape(1, 1, num_inducing)
+                .repeat(out_features, in_features, 1)
+            )
+            init_ls = initial_lengthscale
         
         # Variational parameters
         self.q_mu = nn.Parameter(torch.randn(out_features, in_features, num_inducing) * 0.05)
         self.q_log_var = nn.Parameter(torch.ones(out_features, in_features, num_inducing) * -3.0)
         
         # Kernel hyperparameters (in log space for positivity)
-        self.log_scale = nn.Parameter(torch.zeros(out_features, in_features))
+        # Initialize log_scale based on initial_lengthscale
+        init_log_scale = torch.log(torch.tensor(init_ls))
+        self.log_scale = nn.Parameter(torch.ones(out_features, in_features) * init_log_scale)
         self.log_variance = nn.Parameter(torch.zeros(out_features, in_features) - 1.0)
+        
+        # For strict mode, we use a raw parameter that gets transformed
+        if strict_mean_field:
+            # Store raw parameter for sigmoid transformation
+            # Initialize so that sigmoid(raw) * range + min = init_ls
+            range_ls = self.max_lengthscale - self.min_lengthscale
+            target_sigmoid = (init_ls - self.min_lengthscale) / range_ls
+            target_sigmoid = max(0.01, min(0.99, target_sigmoid))  # Clamp for valid logit
+            init_raw = torch.log(torch.tensor(target_sigmoid / (1 - target_sigmoid)))
+            self.log_scale_raw = nn.Parameter(torch.ones(out_features, in_features) * init_raw)
         
         # Diagnostic tracking
         self._last_diagnostics = None
         self._mean_field_warning_issued = False
+    
+    def _print_strict_mode_info(self, initial_lengthscale):
+        """Print information about strict mean-field configuration."""
+        print(f"\n{'='*70}")
+        print(f"STRICT MEAN-FIELD MODE ENABLED")
+        print(f"{'='*70}")
+        print(f"Configuration:")
+        print(f"  - Inducing points: {self.num_inducing} (FIXED, not learnable)")
+        print(f"  - Domain: [{self.z_min:.2f}, {self.z_max:.2f}]")
+        print(f"  - Fixed spacing: {self.fixed_spacing:.4f}")
+        print(f"  - Max lengthscale: {self.max_lengthscale:.4f} (= spacing / 2)")
+        print(f"  - Min lengthscale: {self.min_lengthscale:.4f}")
+        if initial_lengthscale > self.max_lengthscale:
+            print(f"  - Initial lengthscale {initial_lengthscale:.4f} → clamped to {self.max_lengthscale * 0.9:.4f}")
+        else:
+            print(f"  - Initial lengthscale: {initial_lengthscale:.4f}")
+        print(f"\nGuarantees:")
+        print(f"  ✓ Separation ratio ≥ 1.0 (spacing / (2 × lengthscale))")
+        print(f"  ✓ Mean-field approximation mathematically valid")
+        print(f"  ✓ No clamping needed in orthogonal variance")
+        print(f"{'='*70}\n")
+
+    def get_constrained_scale(self):
+        """
+        Get the constrained lengthscale.
+        
+        In strict mode: bounded to [min_lengthscale, max_lengthscale]
+        In default mode: just clamped to minimum for stability
+        
+        Returns:
+            Tensor of constrained lengthscales [out_features, in_features]
+        """
+        if self.strict_mean_field:
+            # Use sigmoid to bound between min and max
+            sigmoid_val = torch.sigmoid(self.log_scale_raw)
+            range_ls = self.max_lengthscale - self.min_lengthscale
+            constrained = self.min_lengthscale + sigmoid_val * range_ls
+            return constrained
+        else:
+            # Original behavior: just clamp to minimum
+            min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
+            return torch.exp(self.log_scale).clamp(min=min_scale)
 
     def forward(self, x, return_diagnostics=False):
         """
@@ -138,19 +206,16 @@ class GPKANLayer(nn.Module):
         # --- 3. Core GP Logic ---
         constrained_q_var = torch.exp(self.q_log_var).clamp(min=1e-5)
         constrained_var = torch.exp(self.log_variance).clamp(min=1e-5)
-        
-        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
-        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        constrained_scale = self.get_constrained_scale()
 
-        # Check mean-field validity if strict mode and issue warning once
+        # Verify mean-field in strict mode (should always pass now)
         if self.strict_mean_field and not self._mean_field_warning_issued:
             is_valid, min_ratio, _ = check_mean_field_validity(self.z, constrained_scale)
             if not is_valid:
+                # This should not happen with the new implementation
                 warnings.warn(
-                    f"GPKANLayer: Mean-field assumptions violated during forward pass. "
-                    f"Separation ratio = {min_ratio:.2f} (need > 2.0). "
-                    f"Lengthscales may have changed during training. "
-                    f"Consider constraining lengthscales or reducing num_inducing.",
+                    f"GPKANLayer: Unexpected mean-field violation in strict mode. "
+                    f"Separation ratio = {min_ratio:.2f}. This is a bug - please report.",
                     UserWarning
                 )
                 self._mean_field_warning_issued = True
@@ -216,8 +281,7 @@ class GPKANLayer(nn.Module):
         
         # Get constrained parameters (same as used in forward pass)
         constrained_var = torch.exp(self.log_variance).clamp(min=1e-5)
-        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
-        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        constrained_scale = self.get_constrained_scale()
         
         if self.kernel_type == 'rbf':
             kl = compute_kl_divergence(
@@ -238,6 +302,24 @@ class GPKANLayer(nn.Module):
         """Returns the ARD variance magnitude for feature selection."""
         return torch.exp(self.log_variance)
     
+    def get_lengthscale_info(self):
+        """
+        Get information about current lengthscales.
+        
+        Returns:
+            dict with 'current', 'min_allowed', 'max_allowed', 'is_constrained'
+        """
+        constrained_scale = self.get_constrained_scale()
+        return {
+            'current': constrained_scale.detach(),
+            'min': constrained_scale.min().item(),
+            'max': constrained_scale.max().item(),
+            'mean': constrained_scale.mean().item(),
+            'min_allowed': self.min_lengthscale,
+            'max_allowed': self.max_lengthscale if self.strict_mean_field else float('inf'),
+            'is_constrained': self.strict_mean_field
+        }
+    
     def check_approximation(self, x_var=None, verbose=True):
         """
         Check whether mean-field approximation assumptions are satisfied.
@@ -250,12 +332,20 @@ class GPKANLayer(nn.Module):
             dict with diagnostic information
         """
         constrained_var = torch.exp(self.log_variance).clamp(min=1e-5)
-        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
-        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        constrained_scale = self.get_constrained_scale()
         
-        return check_mean_field_assumptions(
+        result = check_mean_field_assumptions(
             self.z, constrained_scale, constrained_var, x_var, verbose
         )
+        
+        # Add lengthscale info
+        if verbose:
+            ls_info = self.get_lengthscale_info()
+            print(f"Lengthscale range: [{ls_info['min']:.4f}, {ls_info['max']:.4f}]")
+            if self.strict_mean_field:
+                print(f"Bounded to: [{ls_info['min_allowed']:.4f}, {ls_info['max_allowed']:.4f}]")
+        
+        return result
     
     def get_last_diagnostics(self):
         """Return diagnostics from last forward pass (if computed)."""
@@ -269,8 +359,7 @@ class GPKANLayer(nn.Module):
             recommended: Recommended number of inducing points
             current: Current number of inducing points
         """
-        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
-        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        constrained_scale = self.get_constrained_scale()
         
         # Use minimum lengthscale across all edges
         min_lengthscale = constrained_scale.min().item()
@@ -284,3 +373,7 @@ class GPKANLayer(nn.Module):
     def reset_mean_field_warning(self):
         """Reset the mean-field warning flag (useful for re-checking after adjustments)."""
         self._mean_field_warning_issued = False
+    
+    def is_inducing_points_learnable(self):
+        """Check if inducing points are learnable."""
+        return isinstance(self.z, nn.Parameter)
