@@ -1,8 +1,27 @@
+"""
+layers.py - SVGP-KAN Layer implementation
+
+Each layer implements a Sparse Variational GP on each edge of a KAN,
+enabling probabilistic inference with uncertainty propagation.
+"""
+
 import torch
 import torch.nn as nn
-from .kernels import rbf_moment_matching, cosine_moment_matching
+from .kernels import rbf_moment_matching, cosine_moment_matching, check_mean_field_assumptions
+
 
 class GPKANLayer(nn.Module):
+    """
+    A single SVGP-KAN layer.
+    
+    Each edge (i,j) is an independent univariate GP with:
+    - Inducing points z[i,j,:]
+    - Variational mean q_mu[i,j,:]  
+    - Variational variance exp(q_log_var[i,j,:])
+    - Kernel lengthscale exp(log_scale[i,j])
+    - Kernel signal variance exp(log_variance[i,j])
+    """
+    
     def __init__(self, in_features, out_features, num_inducing=20, kernel_type='rbf'):
         super().__init__()
         self.in_features = in_features
@@ -11,18 +30,36 @@ class GPKANLayer(nn.Module):
         self.num_inducing = num_inducing
         
         # --- Learnable Parameters ---
+        # Inducing points initialized uniformly in [-1.5, 1.5]
         self.z = nn.Parameter(
             torch.linspace(-1.5, 1.5, num_inducing)
             .reshape(1, 1, num_inducing)
             .repeat(out_features, in_features, 1)
         )
+        
+        # Variational parameters
         self.q_mu = nn.Parameter(torch.randn(out_features, in_features, num_inducing) * 0.05)
         self.q_log_var = nn.Parameter(torch.ones(out_features, in_features, num_inducing) * -3.0)
         
+        # Kernel hyperparameters (in log space for positivity)
         self.log_scale = nn.Parameter(torch.zeros(out_features, in_features))
         self.log_variance = nn.Parameter(torch.zeros(out_features, in_features) - 1.0)
+        
+        # Diagnostic tracking
+        self._last_diagnostics = None
 
-    def forward(self, x):
+    def forward(self, x, return_diagnostics=False):
+        """
+        Forward pass with uncertainty propagation.
+        
+        Args:
+            x: Either a tensor (deterministic input) or tuple (mean, var)
+            return_diagnostics: If True, also return approximation diagnostics
+            
+        Returns:
+            (y_mean, y_var): Output mean and variance tensors
+            diagnostics: (optional) Dict with approximation quality metrics
+        """
         # --- 1. Input Parsing ---
         if isinstance(x, torch.Tensor):
             x_mean, x_var = x, torch.zeros_like(x) + 1e-6
@@ -56,34 +93,45 @@ class GPKANLayer(nn.Module):
         constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
 
         if self.kernel_type == 'rbf':
-            edge_means, edge_vars = rbf_moment_matching(
+            result = rbf_moment_matching(
                 x_mean_flat, x_var_flat, self.z, self.q_mu, constrained_q_var, 
-                constrained_scale, constrained_var
+                constrained_scale, constrained_var,
+                return_diagnostics=return_diagnostics
             )
         elif self.kernel_type == 'cosine':
-            edge_means, edge_vars = cosine_moment_matching(
+            result = cosine_moment_matching(
                 x_mean_flat, x_var_flat, self.z, self.q_mu, constrained_q_var, 
-                constrained_scale, constrained_var
+                constrained_scale, constrained_var,
+                return_diagnostics=return_diagnostics
             )
         else:
             raise ValueError(f"Unknown kernel type: {self.kernel_type}")
 
-        # Aggregation
+        if return_diagnostics:
+            edge_means, edge_vars, diagnostics = result
+            self._last_diagnostics = diagnostics
+        else:
+            edge_means, edge_vars = result
+            diagnostics = None
+
+        # Aggregation across input dimensions
         y_mean_flat = edge_means.sum(dim=2) 
         y_var_flat = edge_vars.sum(dim=2)
 
         # --- 4. Output Reshaping ---
         if ndim == 2:
-            return y_mean_flat, y_var_flat
+            y_mean, y_var = y_mean_flat, y_var_flat
         elif ndim == 4:
             y_mean = y_mean_flat.view(b, h, w, self.out_features).permute(0, 3, 1, 2)
             y_var = y_var_flat.view(b, h, w, self.out_features).permute(0, 3, 1, 2)
-            return y_mean, y_var
         else:
             out_shape = original_shape[:-1] + (self.out_features,)
             y_mean = y_mean_flat.reshape(out_shape)
             y_var = y_var_flat.reshape(out_shape)
-            return y_mean, y_var
+
+        if return_diagnostics:
+            return (y_mean, y_var), diagnostics
+        return y_mean, y_var
 
     def compute_kl(self, jitter=1e-4):
         """
@@ -94,12 +142,9 @@ class GPKANLayer(nn.Module):
         Returns:
             kl: scalar KL divergence
         """
-        # Import here to avoid circular dependency
         try:
             from .kl_divergence import compute_kl_divergence
         except ImportError:
-            # Fallback if kl_divergence.py is not available (backward compatibility)
-            # Return zero so old code still works
             import warnings
             warnings.warn(
                 "kl_divergence module not found. KL term will be zero. "
@@ -112,8 +157,6 @@ class GPKANLayer(nn.Module):
         min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
         constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
         
-        # Compute KL divergence
-        # Note: Only RBF kernel KL is implemented; cosine kernel needs separate implementation
         if self.kernel_type == 'rbf':
             kl = compute_kl_divergence(
                 q_mu=self.q_mu,
@@ -124,7 +167,6 @@ class GPKANLayer(nn.Module):
                 jitter=jitter
             )
         else:
-            # For non-RBF kernels, return zero (can implement later if needed)
             import warnings
             warnings.warn(f"KL divergence not implemented for kernel type '{self.kernel_type}'. Returning zero.")
             kl = torch.tensor(0.0, device=self.q_mu.device)
@@ -132,6 +174,28 @@ class GPKANLayer(nn.Module):
         return kl
 
     def get_relevance(self):
-        """Returns the ARD variance magnitude."""
-
+        """Returns the ARD variance magnitude for feature selection."""
         return torch.exp(self.log_variance)
+    
+    def check_approximation(self, x_var=None, verbose=True):
+        """
+        Check whether mean-field approximation assumptions are satisfied.
+        
+        Args:
+            x_var: [Batch, In] input variances (optional)
+            verbose: Print diagnostic messages
+            
+        Returns:
+            dict with diagnostic information
+        """
+        constrained_var = torch.exp(self.log_variance).clamp(min=1e-5)
+        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
+        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        
+        return check_mean_field_assumptions(
+            self.z, constrained_scale, constrained_var, x_var, verbose
+        )
+    
+    def get_last_diagnostics(self):
+        """Return diagnostics from last forward pass (if computed)."""
+        return self._last_diagnostics

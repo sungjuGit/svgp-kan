@@ -1,6 +1,6 @@
 # svgp_kan/__init__.py
 
-__version__ = "0.4.1"  # Bumped for POD and fixes for orthogonal variance
+__version__ = "0.4.2"  # Bumped for orthogonal variance normalization bugfix
 __author__ = "sungjuGit"
 
 # 1. Expose the High-Level API
@@ -10,7 +10,7 @@ from .regressor import GPKANRegressor
 from .model import GPKAN, gaussian_nll_loss
 from .layers import GPKANLayer
 from .kl_divergence import compute_kl_divergence
-from .kernels import rbf_moment_matching
+from .kernels import rbf_moment_matching, check_mean_field_assumptions
 from .training_utils import (
     EarlyStopping, ModelCheckpoint, KLAnnealingSchedule, 
     GradientClipper, create_lr_scheduler
@@ -32,4 +32,5 @@ __all__ = [
     "gaussian_nll_loss",
     "compute_kl_divergence",
     "rbf_moment_matching",
+    "check_mean_field_assumptions",
 ]
