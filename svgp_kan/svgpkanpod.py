@@ -9,36 +9,23 @@ Key Features:
     - Principled uncertainty quantification via SVGP
     - Built-in loss function with KL annealing support
     - Easy access to latent outputs for interpretability/symbolic regression
+    - Optional strict_mean_field mode for enforcing approximation assumptions
 
 Topology (Branch-Trunk):
     u(branch_inputs, trunk_inputs) = Sum_k [ Branch_k(branch_inputs) * Trunk_k(trunk_inputs) ]
 
 Usage:
+    # Default mode (backward compatible, uses clamping heuristic)
+    pod = SVGPKanPOD(branch_input_dim=2, trunk_input_dim=3, latent_dim=2)
+    
+    # Strict mode (enforces mean-field assumptions, may reduce num_inducing)
+    pod = SVGPKanPOD(branch_input_dim=2, trunk_input_dim=3, latent_dim=2,
+                     strict_mean_field=True)
+
     # Decomposed uncertainty
     result = model.predict_with_uncertainty(branch_in, trunk_in)
     print(f"Epistemic (model): {result['epistemic_var'].mean():.4f}")
     print(f"Aleatoric (noise): {result['aleatoric_var'].mean():.4f}")
-
-    # Symbolic regression on branch
-    branch_mean, branch_var = model.get_branch_outputs(branch_in)
-    # Use branch_mean for PySR, weight by 1/branch_var
-
-    # Symbolic regression on trunk  
-    trunk_mean, trunk_var = model.get_trunk_outputs(trunk_in)
-    # Use trunk_mean for PySR, weight by 1/trunk_var
-
-Examples:
-    # Heat equation - trunk sees all variables for similarity discovery
-    pod = SVGPKanPOD(branch_input_dim=2, trunk_input_dim=3, latent_dim=2)
-    pred_mu, pred_var = pod(branch_inputs=(α,t), trunk_inputs=(x,t,α))
-    
-    # Classic DeepONet - strict separation
-    pod = SVGPKanPOD(branch_input_dim=3, trunk_input_dim=2, latent_dim=10)
-    pred_mu, pred_var = pod(branch_inputs=params, trunk_inputs=(x,t))
-    
-    # POD-like - temporal coefficients only
-    pod = SVGPKanPOD(branch_input_dim=1, trunk_input_dim=2, latent_dim=5)
-    pred_mu, pred_var = pod(branch_inputs=t, trunk_inputs=(x,y))
 """
 
 
@@ -58,8 +45,13 @@ class SVGPKanPOD(nn.Module):
         branch_hidden: Hidden layer sizes for branch network
         trunk_hidden: Hidden layer sizes for trunk network
         num_inducing: Number of inducing points for SVGP
-        kernel: Kernel type ('rbf', 'matern32', 'matern52')
+        kernel: Kernel type ('rbf', 'cosine')
         learn_noise: Whether to learn observation noise variance
+        strict_mean_field: If True, enforce mean-field approximation assumptions
+            by adjusting num_inducing if necessary. Default False (backward compatible).
+        z_min: Minimum inducing point location (default: -1.5)
+        z_max: Maximum inducing point location (default: 1.5)
+        initial_lengthscale: Initial lengthscale for strict_mean_field check (default: 1.0)
         
     Attributes:
         branch (GPKAN): Maps branch_inputs -> latent coefficients
@@ -75,7 +67,11 @@ class SVGPKanPOD(nn.Module):
                  trunk_hidden=None,
                  num_inducing=50,
                  kernel='rbf',
-                 learn_noise=True):
+                 learn_noise=True,
+                 strict_mean_field=False,
+                 z_min=-1.5,
+                 z_max=1.5,
+                 initial_lengthscale=1.0):
         super().__init__()
         
         # Default hidden layers - single layer like original
@@ -87,13 +83,18 @@ class SVGPKanPOD(nn.Module):
         self.latent_dim = latent_dim
         self.branch_input_dim = branch_input_dim
         self.trunk_input_dim = trunk_input_dim
+        self.strict_mean_field = strict_mean_field
         
         # --- Branch Net ---
         # Maps branch_inputs -> Coefficients
         self.branch = GPKAN(
             layers_hidden=[branch_input_dim] + list(branch_hidden) + [latent_dim],
             num_inducing=num_inducing,
-            kernel_type=kernel
+            kernel_type=kernel,
+            strict_mean_field=strict_mean_field,
+            z_min=z_min,
+            z_max=z_max,
+            initial_lengthscale=initial_lengthscale
         )
         
         # --- Trunk Net ---
@@ -101,7 +102,11 @@ class SVGPKanPOD(nn.Module):
         self.trunk = GPKAN(
             layers_hidden=[trunk_input_dim] + list(trunk_hidden) + [latent_dim],
             num_inducing=num_inducing,
-            kernel_type=kernel
+            kernel_type=kernel,
+            strict_mean_field=strict_mean_field,
+            z_min=z_min,
+            z_max=z_max,
+            initial_lengthscale=initial_lengthscale
         )
         
         # --- Observation Noise ---
@@ -119,7 +124,11 @@ class SVGPKanPOD(nn.Module):
             'trunk_hidden': trunk_hidden,
             'num_inducing': num_inducing,
             'kernel': kernel,
-            'learn_noise': learn_noise
+            'learn_noise': learn_noise,
+            'strict_mean_field': strict_mean_field,
+            'z_min': z_min,
+            'z_max': z_max,
+            'initial_lengthscale': initial_lengthscale
         }
 
     def forward(self, branch_inputs, trunk_inputs):
@@ -306,6 +315,26 @@ class SVGPKanPOD(nn.Module):
     def from_config(cls, config):
         """Create model from configuration dict."""
         return cls(**config)
+    
+    def check_all_approximations(self, verbose=True):
+        """
+        Check mean-field approximation assumptions for all layers.
+        
+        Returns:
+            dict with 'branch' and 'trunk' results
+        """
+        if verbose:
+            print("\n=== Branch Network ===")
+        branch_results = self.branch.check_all_approximations(verbose=verbose)
+        
+        if verbose:
+            print("\n=== Trunk Network ===")
+        trunk_results = self.trunk.check_all_approximations(verbose=verbose)
+        
+        return {
+            'branch': branch_results,
+            'trunk': trunk_results
+        }
 
 
 def train_svgpkanpod(model, branch_inputs, trunk_inputs, targets,

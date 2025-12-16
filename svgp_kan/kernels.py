@@ -5,9 +5,7 @@ This version includes:
 - Original mean computation (unchanged)
 - Projected variance (mean-field approximation)
 - Orthogonal variance (Nyström approximation error) with CORRECTED normalization
-
-For OOD detection:
-- Uncertainty naturally saturates at prior variance (correct GP behavior)
+- Optional strict_mean_field mode for enforcing approximation assumptions
 
 The orthogonal variance formula is derived from:
     σ²_⊥ = ψ₀ - tr(K_ZZ⁻¹ Ψ₂)
@@ -15,16 +13,21 @@ The orthogonal variance formula is derived from:
 Under mean-field approximation (K_ZZ ≈ σ_f² I, Ψ₂ ≈ ψ₁ψ₁ᵀ):
     σ²_⊥ ≈ σ_f² - ||ψ₁||² / σ_f² = σ_f² (1 - ||ψ₁||² / σ_f⁴)
 
-The normalized trace ||ψ₁||² / σ_f⁴ ∈ [0,1] represents the fraction of 
-prior variance explained by the inducing points.
+MODES:
+- strict_mean_field=False (DEFAULT): Uses clamping as heuristic. Backward compatible.
+  The normalized trace is clamped to [0,1], which works well in practice even when
+  the mean-field assumptions are not strictly satisfied.
+  
+- strict_mean_field=True: Enforces that inducing points are well-separated (>2ℓ apart).
+  This ensures the mean-field approximation is mathematically valid, but may require
+  fewer inducing points.
 
-BUGFIX (v0.4.2): Previous versions incorrectly normalized by σ_f² instead of σ_f⁴,
-which caused trace_approx to exceed 1 whenever σ_f² > 1, leading to 
-underestimated orthogonal variance.
+BUGFIX (v0.4.2): Corrected normalization from σ_f² to σ_f⁴.
 """
 
 import torch
 import math
+import warnings
 
 
 def rbf_moment_matching(x_mean, x_var, z, q_mu, q_var, lengthscale, variance,
@@ -80,26 +83,23 @@ def rbf_moment_matching(x_mean, x_var, z, q_mu, q_var, lengthscale, variance,
     
     # Component B: Orthogonal variance (Nyström approximation error)
     # 
-    # Exact: σ²_⊥ = ψ₀ - tr(K_ZZ⁻¹ Ψ₂)
-    # 
-    # Mean-field approximation (K_ZZ ≈ σ_f² I, Ψ₂ ≈ ψ₁ψ₁ᵀ):
-    #   tr(K_ZZ⁻¹ Ψ₂) ≈ tr((1/σ_f²)I · ψ₁ψ₁ᵀ) = ||ψ₁||² / σ_f²
-    #   σ²_⊥ ≈ σ_f² - ||ψ₁||² / σ_f² = σ_f² (1 - ||ψ₁||² / σ_f⁴)
+    # Mathematically correct formula:
+    #   trace = ||ψ₁||² / σ_f⁴
+    #   σ²_⊥ = σ_f² (1 - trace)
     #
-    # The normalized trace ||ψ₁||² / σ_f⁴ should be in [0, 1]:
-    #   - At inducing point: ψ₁,j ≈ σ_f², so ||ψ₁||² ≈ σ_f⁴, trace ≈ 1, σ²_⊥ ≈ 0
-    #   - Far from data: ψ₁,j → 0, trace → 0, σ²_⊥ → σ_f²
+    # When trace > 1, the mean-field approximation is breaking down.
+    # We clamp to [0,1] as a heuristic that still gives reasonable behavior.
     
     k_xx = var_kern.squeeze(-1)  # [1, Out, In], this is σ_f²
     
-    # CORRECTED: Normalize by σ_f⁴ (k_xx²), not σ_f² (k_xx)
-    # Previous bug: trace_approx = psi_1.pow(2).sum(-1) / k_xx  <-- WRONG
+    # CORRECTED normalization: divide by σ_f⁴
     psi1_sq_sum = psi_1.pow(2).sum(dim=-1)  # ||ψ₁||²
     k_xx_sq = k_xx.pow(2)  # σ_f⁴
     
     trace_approx_raw = psi1_sq_sum / (k_xx_sq + 1e-8)
     
     # Clamp to [0, 1] - values outside indicate approximation breakdown
+    # This is the heuristic that maintains backward compatibility
     trace_approx = torch.clamp(trace_approx_raw, min=0.0, max=1.0)
     var_ortho = k_xx * (1.0 - trace_approx)
     
@@ -175,12 +175,157 @@ def cosine_moment_matching(x_mean, x_var, z, q_mu, q_var, period, variance,
 
 
 # =============================================================================
-# Diagnostic utilities for monitoring approximation quality
+# Mean-field approximation utilities
 # =============================================================================
+
+def compute_recommended_num_inducing(z_min, z_max, lengthscale, min_separation_factor=2.0):
+    """
+    Compute the maximum number of inducing points that satisfies mean-field assumptions.
+    
+    For the mean-field approximation to be valid, inducing points should be separated
+    by at least `min_separation_factor * lengthscale`.
+    
+    Args:
+        z_min: Minimum inducing point location
+        z_max: Maximum inducing point location
+        lengthscale: Kernel lengthscale
+        min_separation_factor: Minimum separation in units of lengthscale (default: 2.0)
+        
+    Returns:
+        max_inducing: Maximum number of inducing points
+    """
+    domain_size = z_max - z_min
+    min_spacing = min_separation_factor * lengthscale
+    
+    if min_spacing <= 0:
+        return 1
+    
+    # Number of points = floor(domain_size / min_spacing) + 1
+    max_inducing = int(domain_size / min_spacing) + 1
+    return max(2, max_inducing)  # At least 2 inducing points
+
+
+def check_mean_field_validity(z, lengthscale, min_separation_factor=2.0):
+    """
+    Check if inducing point configuration satisfies mean-field assumptions.
+    
+    Args:
+        z: [Out, In, M] or [M] inducing point locations
+        lengthscale: [Out, In] or scalar kernel lengthscales
+        min_separation_factor: Minimum separation in units of lengthscale
+        
+    Returns:
+        is_valid: bool, True if assumptions are satisfied
+        min_ratio: float, minimum separation ratio (want > min_separation_factor)
+        details: dict with diagnostic information
+    """
+    # Handle different input shapes
+    if z.ndim == 1:
+        z = z.unsqueeze(0).unsqueeze(0)  # [1, 1, M]
+    if not isinstance(lengthscale, torch.Tensor):
+        lengthscale = torch.tensor(lengthscale)
+    if lengthscale.ndim == 0:
+        lengthscale = lengthscale.unsqueeze(0).unsqueeze(0)
+    
+    out_features, in_features, M = z.shape
+    
+    if M < 2:
+        return True, float('inf'), {'message': 'Only 1 inducing point, no separation check needed'}
+    
+    min_ratio = float('inf')
+    violations = []
+    
+    for i in range(out_features):
+        for j in range(in_features):
+            z_edge = z[i, j]  # [M]
+            ell = lengthscale[i, j].item() if lengthscale.ndim > 0 else lengthscale.item()
+            
+            # Compute pairwise distances
+            z_sorted, _ = torch.sort(z_edge)
+            spacings = z_sorted[1:] - z_sorted[:-1]
+            min_spacing = spacings.min().item()
+            
+            ratio = min_spacing / (ell + 1e-8)
+            min_ratio = min(min_ratio, ratio)
+            
+            if ratio < min_separation_factor:
+                violations.append({
+                    'edge': (i, j),
+                    'min_spacing': min_spacing,
+                    'lengthscale': ell,
+                    'ratio': ratio,
+                    'required': min_separation_factor
+                })
+    
+    is_valid = len(violations) == 0
+    
+    details = {
+        'is_valid': is_valid,
+        'min_ratio': min_ratio,
+        'required_ratio': min_separation_factor,
+        'n_violations': len(violations),
+        'violations': violations[:5] if violations else [],  # First 5 violations
+    }
+    
+    return is_valid, min_ratio, details
+
+
+def adjust_inducing_points_for_mean_field(num_inducing, z_min, z_max, lengthscale,
+                                          min_separation_factor=2.0, verbose=True):
+    """
+    Adjust number of inducing points to satisfy mean-field assumptions.
+    
+    Args:
+        num_inducing: Requested number of inducing points
+        z_min: Minimum inducing point location
+        z_max: Maximum inducing point location  
+        lengthscale: Initial kernel lengthscale
+        min_separation_factor: Minimum separation in units of lengthscale
+        verbose: Print warning if adjustment is made
+        
+    Returns:
+        adjusted_num: Adjusted number of inducing points
+        was_adjusted: bool, True if adjustment was made
+    """
+    max_inducing = compute_recommended_num_inducing(
+        z_min, z_max, lengthscale, min_separation_factor
+    )
+    
+    if num_inducing <= max_inducing:
+        return num_inducing, False
+    
+    if verbose:
+        warnings.warn(
+            f"\n{'='*70}\n"
+            f"MEAN-FIELD APPROXIMATION: Inducing points adjusted\n"
+            f"{'='*70}\n"
+            f"Requested: {num_inducing} inducing points\n"
+            f"Adjusted:  {max_inducing} inducing points\n"
+            f"\n"
+            f"Reason: For the mean-field approximation to be mathematically valid,\n"
+            f"inducing points must be separated by at least {min_separation_factor}× the lengthscale.\n"
+            f"\n"
+            f"Current configuration:\n"
+            f"  - Domain: [{z_min:.2f}, {z_max:.2f}] (size = {z_max-z_min:.2f})\n"
+            f"  - Lengthscale: {lengthscale:.3f}\n"
+            f"  - Required spacing: {min_separation_factor * lengthscale:.3f}\n"
+            f"  - Max inducing points: {max_inducing}\n"
+            f"\n"
+            f"To use more inducing points in future runs, either:\n"
+            f"  1. Use fewer inducing points: num_inducing <= {max_inducing}\n"
+            f"  2. Use a smaller lengthscale (constrain log_scale initialization)\n"
+            f"  3. Expand the inducing point domain (adjust z_min, z_max)\n"
+            f"  4. Set strict_mean_field=False to use clamping heuristic (default)\n"
+            f"{'='*70}",
+            UserWarning
+        )
+    
+    return max_inducing, True
+
 
 def check_mean_field_assumptions(z, lengthscale, variance, x_var=None, verbose=True):
     """
-    Check whether the mean-field approximation assumptions are satisfied.
+    Comprehensive check of mean-field approximation assumptions.
     
     Assumptions:
     1. Inducing points are well-separated: |Z_i - Z_j| > 2ℓ for i ≠ j
@@ -207,30 +352,14 @@ def check_mean_field_assumptions(z, lengthscale, variance, x_var=None, verbose=T
     }
     
     # Check inducing point separation
-    min_separations = []
-    for i in range(out_features):
-        for j in range(in_features):
-            z_edge = z[i, j]  # [M]
-            ell = lengthscale[i, j].item()
-            
-            # Pairwise distances
-            dists = (z_edge.unsqueeze(0) - z_edge.unsqueeze(1)).abs()
-            # Mask diagonal
-            mask = ~torch.eye(M, dtype=torch.bool, device=z.device)
-            if mask.sum() > 0:
-                min_sep = dists[mask].min().item()
-                min_separations.append(min_sep / ell)
-                
-                if min_sep < 2 * ell:
-                    diagnostics['separation_ok'] = False
-                    diagnostics['details'].append(
-                        f"Edge ({i},{j}): min separation = {min_sep:.3f}, "
-                        f"threshold = {2*ell:.3f} (2ℓ)"
-                    )
+    is_valid, min_ratio, sep_details = check_mean_field_validity(z, lengthscale)
+    diagnostics['separation_ok'] = is_valid
+    diagnostics['min_separation_ratio'] = min_ratio
     
-    if min_separations:
-        diagnostics['min_separation_ratio'] = min(min_separations)
-        diagnostics['mean_separation_ratio'] = sum(min_separations) / len(min_separations)
+    if not is_valid:
+        diagnostics['details'].append(
+            f"Inducing point separation too small: ratio = {min_ratio:.2f} (need > 2.0)"
+        )
     
     # Check signal variance
     var_min = variance.min().item()
@@ -246,7 +375,6 @@ def check_mean_field_assumptions(z, lengthscale, variance, x_var=None, verbose=T
     # Check input variance if provided
     if x_var is not None:
         ell_sq = lengthscale.pow(2)
-        # Average check across edges
         x_var_mean = x_var.mean(dim=0)  # [In]
         
         for j in range(in_features):

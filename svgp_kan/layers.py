@@ -3,11 +3,27 @@ layers.py - SVGP-KAN Layer implementation
 
 Each layer implements a Sparse Variational GP on each edge of a KAN,
 enabling probabilistic inference with uncertainty propagation.
+
+MODES:
+- strict_mean_field=False (DEFAULT): Uses clamping heuristic for orthogonal variance.
+  Backward compatible. Works well in practice even when approximation assumptions
+  are not strictly satisfied.
+  
+- strict_mean_field=True: Enforces that inducing points are well-separated.
+  Will automatically reduce num_inducing if necessary and print a warning.
 """
 
 import torch
 import torch.nn as nn
-from .kernels import rbf_moment_matching, cosine_moment_matching, check_mean_field_assumptions
+import warnings
+from .kernels import (
+    rbf_moment_matching, 
+    cosine_moment_matching, 
+    check_mean_field_assumptions,
+    check_mean_field_validity,
+    adjust_inducing_points_for_mean_field,
+    compute_recommended_num_inducing
+)
 
 
 class GPKANLayer(nn.Module):
@@ -20,19 +36,52 @@ class GPKANLayer(nn.Module):
     - Variational variance exp(q_log_var[i,j,:])
     - Kernel lengthscale exp(log_scale[i,j])
     - Kernel signal variance exp(log_variance[i,j])
+    
+    Args:
+        in_features: Number of input features
+        out_features: Number of output features
+        num_inducing: Number of inducing points per edge
+        kernel_type: 'rbf' or 'cosine'
+        strict_mean_field: If True, enforce mean-field approximation assumptions
+            by adjusting num_inducing if necessary. Default False (backward compatible).
+        z_min: Minimum inducing point location (default: -1.5)
+        z_max: Maximum inducing point location (default: 1.5)
+        initial_lengthscale: Initial lengthscale for strict_mean_field check (default: 1.0)
     """
     
-    def __init__(self, in_features, out_features, num_inducing=20, kernel_type='rbf'):
+    def __init__(self, in_features, out_features, num_inducing=20, kernel_type='rbf',
+                 strict_mean_field=False, z_min=-1.5, z_max=1.5, initial_lengthscale=1.0):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.kernel_type = kernel_type.lower()
+        self.strict_mean_field = strict_mean_field
+        self.z_min = z_min
+        self.z_max = z_max
+        
+        # Store original request for reference
+        self._requested_num_inducing = num_inducing
+        
+        # Adjust num_inducing if strict_mean_field is enabled
+        if strict_mean_field:
+            num_inducing, was_adjusted = adjust_inducing_points_for_mean_field(
+                num_inducing=num_inducing,
+                z_min=z_min,
+                z_max=z_max,
+                lengthscale=initial_lengthscale,
+                min_separation_factor=2.0,
+                verbose=True
+            )
+            self._was_adjusted = was_adjusted
+        else:
+            self._was_adjusted = False
+        
         self.num_inducing = num_inducing
         
         # --- Learnable Parameters ---
-        # Inducing points initialized uniformly in [-1.5, 1.5]
+        # Inducing points initialized uniformly in [z_min, z_max]
         self.z = nn.Parameter(
-            torch.linspace(-1.5, 1.5, num_inducing)
+            torch.linspace(z_min, z_max, num_inducing)
             .reshape(1, 1, num_inducing)
             .repeat(out_features, in_features, 1)
         )
@@ -47,6 +96,7 @@ class GPKANLayer(nn.Module):
         
         # Diagnostic tracking
         self._last_diagnostics = None
+        self._mean_field_warning_issued = False
 
     def forward(self, x, return_diagnostics=False):
         """
@@ -91,6 +141,19 @@ class GPKANLayer(nn.Module):
         
         min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
         constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+
+        # Check mean-field validity if strict mode and issue warning once
+        if self.strict_mean_field and not self._mean_field_warning_issued:
+            is_valid, min_ratio, _ = check_mean_field_validity(self.z, constrained_scale)
+            if not is_valid:
+                warnings.warn(
+                    f"GPKANLayer: Mean-field assumptions violated during forward pass. "
+                    f"Separation ratio = {min_ratio:.2f} (need > 2.0). "
+                    f"Lengthscales may have changed during training. "
+                    f"Consider constraining lengthscales or reducing num_inducing.",
+                    UserWarning
+                )
+                self._mean_field_warning_issued = True
 
         if self.kernel_type == 'rbf':
             result = rbf_moment_matching(
@@ -145,7 +208,6 @@ class GPKANLayer(nn.Module):
         try:
             from .kl_divergence import compute_kl_divergence
         except ImportError:
-            import warnings
             warnings.warn(
                 "kl_divergence module not found. KL term will be zero. "
                 "To enable proper Bayesian inference, ensure kl_divergence.py is in the package."
@@ -167,7 +229,6 @@ class GPKANLayer(nn.Module):
                 jitter=jitter
             )
         else:
-            import warnings
             warnings.warn(f"KL divergence not implemented for kernel type '{self.kernel_type}'. Returning zero.")
             kl = torch.tensor(0.0, device=self.q_mu.device)
         
@@ -199,3 +260,27 @@ class GPKANLayer(nn.Module):
     def get_last_diagnostics(self):
         """Return diagnostics from last forward pass (if computed)."""
         return self._last_diagnostics
+    
+    def get_recommended_num_inducing(self):
+        """
+        Get recommended number of inducing points based on current lengthscales.
+        
+        Returns:
+            recommended: Recommended number of inducing points
+            current: Current number of inducing points
+        """
+        min_scale = 0.1 if self.kernel_type == 'rbf' else 0.5
+        constrained_scale = torch.exp(self.log_scale).clamp(min=min_scale)
+        
+        # Use minimum lengthscale across all edges
+        min_lengthscale = constrained_scale.min().item()
+        
+        recommended = compute_recommended_num_inducing(
+            self.z_min, self.z_max, min_lengthscale, min_separation_factor=2.0
+        )
+        
+        return recommended, self.num_inducing
+    
+    def reset_mean_field_warning(self):
+        """Reset the mean-field warning flag (useful for re-checking after adjustments)."""
+        self._mean_field_warning_issued = False
