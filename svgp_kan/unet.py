@@ -85,38 +85,63 @@ class SVGPUNet_Fluid(SVGPUNet):
         # Optional: Initialize log_var to be low (stable start)
         torch.nn.init.constant_(self.final.bias[1], -5.0)
 
-    def forward(self, x):
+    def forward(self, x, return_gp_var=False):
+        """
+        Forward pass for fluid dynamics prediction.
+
+        Args:
+            x: Input tensor [B, C, H, W]
+            return_gp_var: If True, also return the GP bottleneck epistemic
+                           variance as a third element. The returned z_var_spatial
+                           is the mean GP variance across bottleneck channels,
+                           spatially upsampled to match the input resolution
+                           [B, 1, H, W]. This is the principled epistemic
+                           uncertainty signal from the SVGP-KAN layer, distinct
+                           from the learned aleatoric pred_var output.
+                           Default False preserves the original return signature
+                           so training code is unaffected.
+        """
         e1 = self.enc1(x)
         p1 = self.pool1(e1)
         e2 = self.enc2(p1)
         p2 = self.pool2(e2)
-        
+
         # GP Bottleneck (Latent Uncertainty)
+        # z_var is the GP posterior variance: high near inducing points (data
+        # support), reverts to prior sigma_f^2 for out-of-distribution inputs.
         z_mu, z_var = self.bottleneck_gp(p2)
-        
-        # Sampling during training
-        # This is the reparameterization trick: z = mu + eps * sqrt(var)
+
+        # Sampling during training (reparameterization trick)
         if self.training:
             std = torch.sqrt(torch.clamp(z_var, min=1e-6))
             eps = torch.randn_like(std)
-            z = z_mu + eps * std  
+            z = z_mu + eps * std
         else:
             z = z_mu  # Use mean during evaluation
-        
+
         # Decoder uses the sampled (or mean) latent representation
         d2 = self.up2(z)
         d2 = torch.cat([d2, e2], dim=1)
         d2 = self.dec2(d2)
-        
+
         d1 = self.up1(d2)
         d1 = torch.cat([d1, e1], dim=1)
         d1 = self.dec1(d1)
-        
+
         # Final Output: [Batch, 2, H, W]
         out = self.final(d1)
-        
+
         pred_mean = out[:, 0:1, :, :]      # Channel 0: Fluid State
-        pred_log_var = out[:, 1:2, :, :]   # Channel 1: Uncertainty
+        pred_log_var = out[:, 1:2, :, :]   # Channel 1: Aleatoric uncertainty
         pred_var = torch.exp(pred_log_var)
-        
+
+        if return_gp_var:
+            # Mean GP variance across bottleneck channels -> [B, 1, H_enc, W_enc]
+            z_var_spatial = z_var.mean(dim=1, keepdim=True)
+            # Upsample to input resolution for visualization and comparison
+            z_var_spatial = torch.nn.functional.interpolate(
+                z_var_spatial, size=x.shape[-2:], mode='bilinear', align_corners=False
+            )
+            return pred_mean, pred_var, z_var_spatial
+
         return pred_mean, pred_var
