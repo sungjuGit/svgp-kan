@@ -251,13 +251,15 @@ If you use **SVGP-KAN**, its ideas, and/or examples in your research, please cit
   doi     = {10.48550/arXiv.2512.00260},
   url     = {https://arxiv.org/abs/2512.00260}
 }
+
+Ju, Y. Sungtaek. “Uncertainty Quantification for Scientific Machine Learning Using Sparse Variational Gaussian Process Kolmogorov–Arnold Networks (SVGP KAN).” Machine Learning: Science and Technology 7, no. 2 (2026): 025042. https://doi.org/10.1088/2632-2153/ae5502.
+
 @article{ju2025svgpkanUQ,
-  title   = {Uncertainty Quantification for Scientific Machine Learning using Sparse
-  Variational Gaussian Process Kolmogorov-Arnold Networks (SVGP KAN)},
+  title   = {Uncertainty Quantification for Scientific Machine Learning using Sparse Variational Gaussian Process Kolmogorov-Arnold Networks (SVGP KAN)},
   author  = {Ju, Y. Sungtaek},
-  journal = {arXiv preprint arXiv:2512.05306},
-  year    = {2025},
-  doi     = {10.48550/arXiv.2512.05306},
-  url     = {http://arxiv.org/abs/2512.05306}
+  journal = {Machine Learning: Science and Technology},
+  year    = {2026},
+  doi     = {10.1088/2632-2153/ae5502},
+  url     = {https://doi.org/10.1088/2632-2153/ae5502}
 }
 ```
